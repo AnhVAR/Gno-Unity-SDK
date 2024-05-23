@@ -822,6 +822,7 @@ func processMessages(c *websocket.Conn, done chan<- struct{}) {
 			log.Println("Received keep-alive message")
 			// Handle keep-alive message
 		case "data":
+			log.Println("Received new transaction message")
 			var data struct {
 				Payload struct {
 					Data struct {
