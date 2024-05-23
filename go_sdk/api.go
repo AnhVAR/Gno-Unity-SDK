@@ -43,6 +43,7 @@ typedef struct {
 */
 import "C"
 import (
+	"encoding/json"
 	"log"
 	"net/url"
 	"os"
@@ -682,6 +683,27 @@ type SubscriptionMessage struct {
 		Variables string `json:"variables,omitempty"`
 	} `json:"payload"`
 }
+type Transaction struct {
+	Index       int                 `json:"index"`
+	Hash        string              `json:"hash"`
+	BlockHeight int                 `json:"block_height"`
+	GasUsed     int                 `json:"gas_used"`
+	Messages    []Message           `json:"messages"`
+	Response    TransactionResponse `json:"response"`
+}
+
+type Message struct {
+	Route   string       `json:"route"`
+	TypeURL string       `json:"typeUrl"`
+	Value   MessageValue `json:"value"`
+}
+
+type MessageValue struct {
+	Typename string `json:"__typename"`
+}
+type TransactionResponse struct {
+	Log string `json:"log"`
+}
 
 func main() {
 	interrupt := make(chan os.Signal, 1)
@@ -690,83 +712,54 @@ func main() {
 	u := url.URL{Scheme: "ws", Host: "0.0.0.0:8546", Path: "/graphql/query"}
 	log.Println("connecting to", u.String())
 
-	// Create WebSocket connection
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
 		log.Fatal("dial:", err)
 	}
 	defer c.Close()
 
-	// Send connection_init message
-	connInit := ConnectionInitMessage{
-		Type: "connection_init",
-	}
-	if err := c.WriteJSON(connInit); err != nil {
-		log.Fatal("write connection_init:", err)
+	if err := sendConnectionInitMessage(c); err != nil {
+		log.Fatal("send connection_init:", err)
 	}
 
-	// Read connection_ack message
-	_, message, err := c.ReadMessage()
-	if err != nil {
-		log.Fatal("read connection_ack:", err)
+	if err := handleConnectionAck(c); err != nil {
+		log.Fatal("handle connection_ack:", err)
 	}
-	log.Printf("recv: %s", message)
 
-	// Query subscription
 	subscriptionQuery := `
-	subscription {
-			transactions(filter: {success: true}) {
-					index
-					hash
-					block_height
-					gas_used
-					messages {
-							route
-							typeUrl
-							value {
-									__typename
-									... on MsgAddPackage {
-											creator
-											package {
-													name
-													path
-											}
-									}
-							}
-					}
-					response {
-							log
-					}
-			}
-	}`
+    subscription {
+        transactions(filter: {success: true}) {
+            index
+            hash
+            block_height
+            gas_used
+            messages {
+                route
+                typeUrl
+                value {
+                    __typename
+                    ... on MsgAddPackage {
+                        creator
+                        package {
+                            name
+                            path
+                        }
+                    }
+                }
+            }
+            response {
+                log
+            }
+        }
+    }`
 
-	// Tạo thông điệp subscription
-	subMsg := SubscriptionMessage{
-		Type: "start",
-		ID:   "1", // ID duy nhất cho subscription
-	}
-	subMsg.Payload.Query = subscriptionQuery
-
-	// Send subscription message
-	if err := c.WriteJSON(subMsg); err != nil {
-		log.Fatal("write subscription:", err)
+	if err := sendSubscription(c, subscriptionQuery); err != nil {
+		log.Fatal("send subscription:", err)
 	}
 
-	// Read subscription response
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			_, message, err := c.ReadMessage()
-			if err != nil {
-				log.Println("read:", err)
-				return
-			}
-			log.Printf("recv: %s", message)
-		}
-	}()
+	go processMessages(c, done)
 
-	// Interrupt signal
 	select {
 	case <-interrupt:
 		log.Println("interrupt signal received, closing connection")
@@ -774,9 +767,7 @@ func main() {
 		log.Println("connection closed")
 	}
 
-	// Close WebSocket connection
-	err = c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-	if err != nil {
+	if err := c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
 		log.Println("write close:", err)
 		return
 	}
@@ -785,4 +776,89 @@ func main() {
 	case <-done:
 	case <-time.After(time.Second):
 	}
+}
+
+func sendConnectionInitMessage(c *websocket.Conn) error {
+	connInit := ConnectionInitMessage{
+		Type: "connection_init",
+	}
+	return c.WriteJSON(connInit)
+}
+
+func handleConnectionAck(c *websocket.Conn) error {
+	_, _, err := c.ReadMessage()
+	return err
+}
+
+func sendSubscription(c *websocket.Conn, query string) error {
+	subMsg := SubscriptionMessage{
+		Type: "start",
+		ID:   "1",
+	}
+	subMsg.Payload.Query = query
+	return c.WriteJSON(subMsg)
+}
+
+func processMessages(c *websocket.Conn, done chan<- struct{}) {
+	defer close(done)
+	for {
+		_, message, err := c.ReadMessage()
+		if err != nil {
+			log.Println("read:", err)
+			return
+		}
+
+		// Check the type of message and handle it accordingly
+		var msgType struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(message, &msgType); err != nil {
+			log.Println("json unmarshal:", err)
+			continue
+		}
+
+		switch msgType.Type {
+		case "ka":
+			log.Println("Received keep-alive message")
+			// Handle keep-alive message
+		case "data":
+			var data struct {
+				Payload struct {
+					Data struct {
+						Transactions Transaction `json:"transactions"`
+					} `json:"data"`
+				} `json:"payload"`
+			}
+			if err := json.Unmarshal(message, &data); err != nil {
+				log.Println("json unmarshal:", err)
+				continue
+			}
+			handleTransaction(data.Payload.Data.Transactions)
+		default:
+			log.Println("Unknown message type:", msgType.Type)
+		}
+	}
+}
+
+// handleTransaction function to process the transaction data
+func handleTransaction(transaction Transaction) {
+	// Process the transaction data here
+	log.Println("Index:", transaction.Index)
+	log.Println("Hash:", transaction.Hash)
+	log.Println("Block Height:", transaction.BlockHeight)
+	log.Println("Gas Used:", transaction.GasUsed)
+	log.Println("Response Log:", transaction.Response.Log)
+
+	// Process messages
+	for _, message := range transaction.Messages {
+		log.Println("Message Route:", message.Route)
+		log.Println("Message TypeURL:", message.TypeURL)
+		log.Println("Message Typename:", message.Value.Typename)
+	}
+}
+
+func logErrorMessage(message map[string]interface{}) {
+	// Assuming the message contains error details
+	// Log the error details
+	log.Println("Received error:", message)
 }

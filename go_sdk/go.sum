@@ -83,8 +83,6 @@ github.com/fsnotify/fsnotify v1.4.9 h1:hsms1Qyu0jgnwNXIxa+/V/PDsU6CfLf6CNO8H7IWo
 github.com/fsnotify/fsnotify v1.4.9/go.mod h1:znqG4EE+3YCdAaPaxE2ZRY/06pZUdp0tY4IgpuI1SZQ=
 github.com/gnolang/gno v0.0.0-20240219210232-1c6d184cf828 h1:gPJfssV26634+lKmBPHEmelm3kVGVRnLCdhQshJJTS0=
 github.com/gnolang/gno v0.0.0-20240219210232-1c6d184cf828/go.mod h1:qK1uoUyInKWmyKe1ToB5Hu1ZbAK4CIYft4lpGpjbAn4=
-github.com/gnolang/gnomobile v0.0.0-20231211144738-5783ec7ec26a h1:irgx9viR/hYFES48LyPlMoJnPqCq6A9Y78BkHtRX1tg=
-github.com/gnolang/gnomobile v0.0.0-20231211144738-5783ec7ec26a/go.mod h1:7acQjPC5UUEuSBsrvwOSnRa0M4tBQdO5YlB2clWgOkU=
 github.com/gnolang/goleveldb v0.0.9 h1:Q7rGko9oXMKtQA+Apeeed5a3sjba/mcDhzJGoTVLCKE=
 github.com/gnolang/goleveldb v0.0.9/go.mod h1:Dz6p9bmpy/FBESTgduiThZt5mToVDipcHGzj/zUOo8E=
 github.com/gnolang/overflow v0.0.0-20170615021017-4d914c927216 h1:GKvsK3oLWG9B1GL7WP/VqwM6C92j5tIvB844oggL9Lk=
@@ -161,6 +159,8 @@ github.com/libp2p/go-buffer-pool v0.1.0 h1:oK4mSFcQz7cTQIfqbe4MIj9gLW+mnanjyFtc6
 github.com/libp2p/go-buffer-pool v0.1.0/go.mod h1:N+vh8gMqimBzdKkSMVuydVDq+UV5QTWy5HSiZacSbPg=
 github.com/linxGnu/grocksdb v1.8.11 h1:BGol9e5gB1BrsTvOxloC88pe70TCqgrfLNwkyWW0kD8=
 github.com/linxGnu/grocksdb v1.8.11/go.mod h1:xZCIb5Muw+nhbDK4Y5UJuOrin5MceOuiXkVUR7vp4WY=
+github.com/machinebox/graphql v0.2.2 h1:dWKpJligYKhYKO5A2gvNhkJdQMNZeChZYyBbrZkBZfo=
+github.com/machinebox/graphql v0.2.2/go.mod h1:F+kbVMHuwrQ5tYgU9JXlnskM8nOaFxCAEolaQybkjWA=
 github.com/magiconair/properties v1.8.0/go.mod h1:PppfXfuXeibc/6YijjN8zIbojt8czPbwD3XqdrwzmxQ=
 github.com/mitchellh/go-homedir v1.1.0/go.mod h1:SfyaCUpYCn1Vlf4IUYiD9fPX4A5wJrkLzIz1N1q0pr0=
 github.com/mitchellh/mapstructure v1.1.2/go.mod h1:FVVH3fgwuzCH5S8UJGiWEs2h04kUh9fWfEaFds41c1Y=

@@ -11,16 +11,16 @@ enum
 
 int main()
 {
-    // int ret = SetRemote("test3.gno.land:36657");
-    // if (ret == Success)
-    // {
-    //     printf("Set Remote Success\n");
-    // }
-    // else
-    // {
-    //     printf("Set Remote Fail\n");
-    // }
-    // printf("Remote is %s \n", GetRemote());
+    int ret = SetRemote("test3.gno.land:36657");
+    if (ret == Success)
+    {
+        printf("Set Remote Success\n");
+    }
+    else
+    {
+        printf("Set Remote Fail\n");
+    }
+    printf("Remote is %s \n", GetRemote());
 
     // SetChainID("dev");
 
