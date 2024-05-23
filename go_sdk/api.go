@@ -43,7 +43,12 @@ typedef struct {
 */
 import "C"
 import (
+	"log"
+	"net/url"
+	"os"
+	"os/signal"
 	"reflect"
+	"time"
 	"unsafe"
 	"var/gno_sdk/service"
 
@@ -52,6 +57,7 @@ import (
 	"github.com/gnolang/gno/tm2/pkg/crypto"
 	"github.com/gnolang/gno/tm2/pkg/crypto/bip39"
 	crypto_keys "github.com/gnolang/gno/tm2/pkg/crypto/keys"
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
@@ -662,4 +668,121 @@ func AddressFromBech32(bech32Address *C.char) unsafe.Pointer {
 	return cBytes
 }
 
-func main() {}
+// define the ConnectionInitMessage struct
+type ConnectionInitMessage struct {
+	Type string `json:"type"`
+}
+
+// define the SubscriptionMessage struct
+type SubscriptionMessage struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Payload struct {
+		Query     string `json:"query"`
+		Variables string `json:"variables,omitempty"`
+	} `json:"payload"`
+}
+
+func main() {
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+
+	u := url.URL{Scheme: "ws", Host: "0.0.0.0:8546", Path: "/graphql/query"}
+	log.Println("connecting to", u.String())
+
+	// Create WebSocket connection
+	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
+	if err != nil {
+		log.Fatal("dial:", err)
+	}
+	defer c.Close()
+
+	// Send connection_init message
+	connInit := ConnectionInitMessage{
+		Type: "connection_init",
+	}
+	if err := c.WriteJSON(connInit); err != nil {
+		log.Fatal("write connection_init:", err)
+	}
+
+	// Read connection_ack message
+	_, message, err := c.ReadMessage()
+	if err != nil {
+		log.Fatal("read connection_ack:", err)
+	}
+	log.Printf("recv: %s", message)
+
+	// Query subscription
+	subscriptionQuery := `
+	subscription {
+			transactions(filter: {success: true}) {
+					index
+					hash
+					block_height
+					gas_used
+					messages {
+							route
+							typeUrl
+							value {
+									__typename
+									... on MsgAddPackage {
+											creator
+											package {
+													name
+													path
+											}
+									}
+							}
+					}
+					response {
+							log
+					}
+			}
+	}`
+
+	// Tạo thông điệp subscription
+	subMsg := SubscriptionMessage{
+		Type: "start",
+		ID:   "1", // ID duy nhất cho subscription
+	}
+	subMsg.Payload.Query = subscriptionQuery
+
+	// Send subscription message
+	if err := c.WriteJSON(subMsg); err != nil {
+		log.Fatal("write subscription:", err)
+	}
+
+	// Read subscription response
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			_, message, err := c.ReadMessage()
+			if err != nil {
+				log.Println("read:", err)
+				return
+			}
+			log.Printf("recv: %s", message)
+		}
+	}()
+
+	// Interrupt signal
+	select {
+	case <-interrupt:
+		log.Println("interrupt signal received, closing connection")
+	case <-done:
+		log.Println("connection closed")
+	}
+
+	// Close WebSocket connection
+	err = c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	if err != nil {
+		log.Println("write close:", err)
+		return
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+	}
+}
