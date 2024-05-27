@@ -43,7 +43,14 @@ typedef struct {
 */
 import "C"
 import (
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/url"
+	"os"
+	"os/signal"
 	"reflect"
+	"time"
 	"unsafe"
 	"var/gno_sdk/service"
 
@@ -52,12 +59,20 @@ import (
 	"github.com/gnolang/gno/tm2/pkg/crypto"
 	"github.com/gnolang/gno/tm2/pkg/crypto/bip39"
 	crypto_keys "github.com/gnolang/gno/tm2/pkg/crypto/keys"
+	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
 const (
 	Success C.int = 1
 	Fail          = 0
+)
+
+var (
+	conn         *websocket.Conn
+	transactions chan Transaction
+	done         chan struct{}
+	interrupt    chan os.Signal
 )
 
 var serviceEx, _ = service.NewGnoNativeService()
@@ -593,7 +608,6 @@ func Send(address *C.uint8_t, gasFee *C.char, gasWanted C.uint64_t, send *C.char
 	}
 
 	msgs := make([]gnoclient.MsgSend, 0)
-
 	// for _, msg := range req.Msg.Msgs {
 	msgs = append(msgs, gnoclient.MsgSend{
 		ToAddress: crypto.AddressFromBytes(C.GoBytes(unsafe.Pointer(address), C.ADDRESS_SIZE)),
@@ -607,9 +621,18 @@ func Send(address *C.uint8_t, gasFee *C.char, gasWanted C.uint64_t, send *C.char
 		return nil
 	}
 
-	// *retLen = C.int(len(bres.DeliverTx.Data))
-	// return (*C.uint8_t)(unsafe.Pointer(&bres.DeliverTx.Data[0]))
-	return nil
+	select {
+	case transaction := <-transactions:
+		// Handle the transaction
+		log.Println("Processed transaction:", transaction.Hash)
+		// Update retLen and return data based on transaction
+		// *retLen = C.int(len(transaction.Data))
+		// return (*C.uint8_t)(unsafe.Pointer(&transaction.Data[0]))
+		return nil
+	case <-time.After(3 * time.Second):
+		log.Println("Timeout waiting for transaction")
+		return nil
+	}
 }
 
 // cArrayToStrings converts a null-terminated array of C strings to a Go slice of strings.
@@ -662,4 +685,443 @@ func AddressFromBech32(bech32Address *C.char) unsafe.Pointer {
 	return cBytes
 }
 
-func main() {}
+// define the ConnectionInitMessage struct
+type ConnectionInitMessage struct {
+	Type string `json:"type"`
+}
+
+// define the SubscriptionMessage struct
+type SubscriptionMessage struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Payload struct {
+		Query     string `json:"query"`
+		Variables string `json:"variables,omitempty"`
+	} `json:"payload"`
+}
+type MessageValue struct {
+	Typename string `json:"__typename"`
+}
+type TransactionResponse struct {
+	Log   string `json:"log"`
+	Data  string `json:"data"`
+	Info  string `json:"info"`
+	Error string `json:"error"`
+}
+type Transaction struct {
+	Index       int       `json:"index"`
+	Hash        string    `json:"hash"`
+	BlockHeight int       `json:"block_height"`
+	GasWanted   int       `json:"gas_wanted"`
+	GasUsed     int       `json:"gas_used"`
+	Success     bool      `json:"success"`
+	ContentRaw  string    `json:"content_raw"`
+	Messages    []Message `json:"messages"`
+	Memo        string    `json:"memo"`
+	Response    struct {
+		Log   string `json:"log"`
+		Data  string `json:"data"`
+		Info  string `json:"info"`
+		Error string `json:"error"`
+	} `json:"response"`
+}
+
+type Message struct {
+	Route   string      `json:"route"`
+	TypeURL string      `json:"typeUrl"`
+	Value   interface{} `json:"value"`
+}
+
+type MsgAddPackage struct {
+	Creator string `json:"creator"`
+	Package struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	} `json:"package"`
+}
+
+type BankMsgSend struct {
+	FromAddress string `json:"from_address"`
+	ToAddress   string `json:"to_address"`
+	Amount      string `json:"amount"`
+}
+
+type MsgCall struct {
+	Caller  string `json:"caller"`
+	Send    string `json:"send"`
+	PkgPath string `json:"pkg_path"`
+	Func    string `json:"func"`
+	Args    string `json:"args"`
+}
+
+type MsgRun struct {
+	Caller  string `json:"caller"`
+	Send    string `json:"send"`
+	Package struct {
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		Files []struct {
+			Name string `json:"name"`
+			Body string `json:"body"`
+		} `json:"files"`
+	} `json:"package"`
+}
+
+type UnexpectedMessage struct {
+	Raw string `json:"raw"`
+}
+
+func sendConnectionInitMessage(c *websocket.Conn) error {
+	connInit := ConnectionInitMessage{
+		Type: "connection_init",
+	}
+	return c.WriteJSON(connInit)
+}
+
+func handleConnectionAck(c *websocket.Conn) error {
+	_, _, err := c.ReadMessage()
+	return err
+}
+
+func sendSubscription(c *websocket.Conn, query string) error {
+	subMsg := SubscriptionMessage{
+		Type: "start",
+		ID:   "1",
+	}
+	subMsg.Payload.Query = query
+	return c.WriteJSON(subMsg)
+}
+
+// Initialize sets up the WebSocket connection and subscriptions
+//
+//export Initialize_Websoket
+func Initialize_Websoket() C.int {
+	interrupt = make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+
+	u := url.URL{Scheme: "ws", Host: "0.0.0.0:8546", Path: "/graphql/query"}
+	log.Println("connecting to", u.String())
+
+	var err error
+	conn, _, err = websocket.DefaultDialer.Dial(u.String(), nil)
+	if err != nil {
+		fmt.Println("dial: %w", err)
+		return 0
+	}
+
+	if err := sendConnectionInitMessage(conn); err != nil {
+		fmt.Println("send connection_init: %w", err)
+		return 0
+	}
+
+	if err := handleConnectionAck(conn); err != nil {
+		fmt.Println("handle connection_ack: %w", err)
+		return 0
+	}
+
+	fromBlockHeight := 1
+	// hash := "0x123456789abcdef", "sample transaction"
+	success := true
+
+	filter := TransactionFilter{
+		FromBlockHeight: &fromBlockHeight,
+		// Hash:            &hash,
+		Success: &success,
+	}
+	subscriptionQuery := GetSubscriptionQuery(&filter)
+	log.Println("Subscription Query:", subscriptionQuery)
+
+	if err := sendSubscription(conn, subscriptionQuery); err != nil {
+		fmt.Println("send subscription: %w", err)
+		return 0
+	}
+
+	done = make(chan struct{})
+	transactions = make(chan Transaction)
+	go processMessages(conn, transactions)
+	return Success
+}
+
+type TransactionFilter struct {
+	FromBlockHeight *int
+	ToBlockHeight   *int
+	FromIndex       *int
+	ToIndex         *int
+	FromGasWanted   *int
+	ToGasWanted     *int
+	FromGasUsed     *int
+	ToGasUsed       *int
+	Hash            *string
+	Memo            *string
+	Success         *bool
+}
+
+// GetSubscriptionQuery generates the subscription query based on the provided TransactionFilter.
+// If filter is nil or its properties are nil, it generates a query without any filter conditions.
+func GetSubscriptionQuery(filter *TransactionFilter) string {
+	query := `
+		subscription {
+			transactions(`
+
+	if filter != nil {
+		query += `filter: {`
+
+		// Add filter conditions only if the filter is not nil and its properties are not nil
+		if filter.FromBlockHeight != nil && *filter.FromBlockHeight != 0 {
+			query += generateField("from_block_height", *filter.FromBlockHeight)
+		}
+		if filter.ToBlockHeight != nil && *filter.ToBlockHeight != 0 {
+			query += generateField("to_block_height", *filter.ToBlockHeight)
+		}
+		if filter.FromIndex != nil && *filter.FromIndex != 0 {
+			query += generateField("from_index", *filter.FromIndex)
+		}
+		if filter.ToIndex != nil && *filter.ToIndex != 0 {
+			query += generateField("to_index", *filter.ToIndex)
+		}
+		if filter.FromGasWanted != nil && *filter.FromGasWanted != 0 {
+			query += generateField("from_gas_wanted", *filter.FromGasWanted)
+		}
+		if filter.ToGasWanted != nil && *filter.ToGasWanted != 0 {
+			query += generateField("to_gas_wanted", *filter.ToGasWanted)
+		}
+		if filter.FromGasUsed != nil && *filter.FromGasUsed != 0 {
+			query += generateField("from_gas_used", *filter.FromGasUsed)
+		}
+		if filter.ToGasUsed != nil && *filter.ToGasUsed != 0 {
+			query += generateField("to_gas_used", *filter.ToGasUsed)
+		}
+		if filter.Hash != nil && *filter.Hash != "" {
+			query += generateField("hash", *filter.Hash)
+		}
+		if filter.Memo != nil && *filter.Memo != "" {
+			query += generateField("memo", *filter.Memo)
+		}
+		if filter.Success != nil {
+			query += generateField("success", *filter.Success)
+		}
+
+		// Remove trailing comma and space
+		if len(query) > len("filter: {") {
+			query = query[:len(query)-2]
+		}
+		query += `})`
+	}
+
+	query += ` {
+				index
+				hash
+				block_height
+				gas_wanted
+				gas_used
+				success
+				content_raw
+				messages {
+					route
+					typeUrl
+					value {
+						__typename
+						... on MsgAddPackage {
+							creator
+							package {
+								name
+								path
+							}
+						}
+						... on BankMsgSend {
+							from_address
+							to_address
+							amount
+						}
+						... on MsgCall {
+							caller
+							send
+							pkg_path
+							func
+							args
+						}
+						... on MsgRun {
+							caller
+							send
+							package {
+								name
+								path
+								files {
+									name
+									body
+								}
+							}
+						}
+						... on UnexpectedMessage {
+							raw
+						}
+					}
+				}
+				memo
+				response {
+					log
+					data
+					info
+					error
+				}
+			}
+		}`
+	return query
+}
+
+func generateField(name string, value interface{}) string {
+	return fmt.Sprintf("%s: %v, ", name, value)
+}
+
+// Cleanup closes the WebSocket connection gracefully
+//
+//export Cleanup
+func Cleanup() {
+	if conn != nil {
+		if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+			log.Println("write close:", err)
+			return
+		}
+		conn.Close()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func processMessages(c *websocket.Conn, transactions chan<- Transaction) {
+	for {
+		_, message, err := c.ReadMessage()
+		if err != nil {
+			log.Println("read:", err)
+			return
+		}
+
+		// Check the type of message and handle it accordingly
+		var msgType struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal(message, &msgType); err != nil {
+			log.Println("json unmarshal:", err)
+			continue
+		}
+
+		switch msgType.Type {
+		case "ka":
+			log.Println("Received keep-alive message")
+		case "data":
+			log.Println("Received new transaction message")
+			var data struct {
+				Payload struct {
+					Data struct {
+						Transactions Transaction `json:"transactions"`
+					} `json:"data"`
+				} `json:"payload"`
+			}
+			if err := json.Unmarshal(message, &data); err != nil {
+				log.Println("json unmarshal:", err)
+				continue
+			}
+			handleTransaction(data.Payload.Data.Transactions)
+			transactions <- data.Payload.Data.Transactions
+		default:
+			log.Println("Unknown message type:", msgType.Type)
+		}
+	}
+}
+func decodeMessageValue(messageType string, value interface{}) (interface{}, error) {
+	switch messageType {
+	case "MsgAddPackage":
+		var msg MsgAddPackage
+		jsonData, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling value for MsgAddPackage: %w", err)
+		}
+		if err := json.Unmarshal(jsonData, &msg); err != nil {
+			return nil, fmt.Errorf("error decoding MsgAddPackage message: %w", err)
+		}
+		return msg, nil
+	case "BankMsgSend":
+		var msg BankMsgSend
+		jsonData, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling value for BankMsgSend: %w", err)
+		}
+		if err := json.Unmarshal(jsonData, &msg); err != nil {
+			return nil, fmt.Errorf("error decoding BankMsgSend message: %w", err)
+		}
+		return msg, nil
+	case "MsgCall":
+		var msg MsgCall
+		jsonData, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling value for MsgCall: %w", err)
+		}
+		if err := json.Unmarshal(jsonData, &msg); err != nil {
+			return nil, fmt.Errorf("error decoding MsgCall message: %w", err)
+		}
+		return msg, nil
+	case "MsgRun":
+		var msg MsgRun
+		jsonData, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling value for MsgRun: %w", err)
+		}
+		if err := json.Unmarshal(jsonData, &msg); err != nil {
+			return nil, fmt.Errorf("error decoding MsgRun message: %w", err)
+		}
+		return msg, nil
+	case "UnexpectedMessage":
+		var msg UnexpectedMessage
+		jsonData, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling value for UnexpectedMessage: %w", err)
+		}
+		if err := json.Unmarshal(jsonData, &msg); err != nil {
+			return nil, fmt.Errorf("error decoding UnexpectedMessage message: %w", err)
+		}
+		return msg, nil
+	default:
+		return nil, fmt.Errorf("unknown message type: %s", messageType)
+	}
+}
+
+// / handleTransaction processes the transaction data
+func handleTransaction(transaction Transaction) {
+	// Process the transaction data here
+	log.Println("Index:", transaction.Index)
+	log.Println("Hash:", transaction.Hash)
+	log.Println("Block Height:", transaction.BlockHeight)
+	log.Println("Gas Wanted:", transaction.GasWanted)
+	log.Println("Gas Used:", transaction.GasUsed)
+	log.Println("Success:", transaction.Success)
+	log.Println("Content Raw:", transaction.ContentRaw)
+	log.Println("Memo:", transaction.Memo)
+	log.Println("Response Log:", transaction.Response.Log)
+	log.Println("Response Data:", transaction.Response.Data)
+	log.Println("Response Info:", transaction.Response.Info)
+	log.Println("Response Error:", transaction.Response.Error)
+
+	// Process messages
+	for _, message := range transaction.Messages {
+		log.Println("Message Route:", message.Route)
+		log.Println("Message TypeURL:", message.TypeURL)
+		switch message.Value.(type) {
+		case string:
+			fmt.Println("Message Value (Raw):", message.Value)
+		default:
+			messageType := message.Value.(map[string]interface{})["__typename"].(string)
+			decodedValue, err := decodeMessageValue(messageType, message.Value)
+			if err != nil {
+				fmt.Println("Error decoding message value:", err)
+				continue
+			}
+			fmt.Printf("Decoded Message Value (Type %s): %+v\n", messageType, decodedValue)
+		}
+	}
+}
+
+func main() {
+}

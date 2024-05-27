@@ -4,7 +4,6 @@ go 1.21.4
 
 require (
 	github.com/gnolang/gno v0.0.0-20240219210232-1c6d184cf828
-	github.com/gnolang/gnomobile v0.0.0-20231211144738-5783ec7ec26a
 	github.com/pkg/errors v0.9.1
 	go.uber.org/zap v1.26.0
 )
@@ -30,12 +29,13 @@ require (
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/flatbuffers v1.12.1 // indirect
-	github.com/gorilla/websocket v1.5.1 // indirect
+	github.com/gorilla/websocket v1.5.1
 	github.com/jaekwon/testify v1.6.1 // indirect
 	github.com/jmhodges/levigo v1.0.0 // indirect
 	github.com/klauspost/compress v1.16.4 // indirect
 	github.com/libp2p/go-buffer-pool v0.1.0 // indirect
 	github.com/linxGnu/grocksdb v1.8.11 // indirect
+	github.com/machinebox/graphql v0.2.2
 	github.com/pelletier/go-toml v1.9.5 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rs/cors v1.10.1 // indirect

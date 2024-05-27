@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h> 
 #include "gno_native_sdk.h"
 
 enum
@@ -11,18 +12,25 @@ enum
 
 int main()
 {
-    // int ret = SetRemote("test3.gno.land:36657");
-    // if (ret == Success)
-    // {
-    //     printf("Set Remote Success\n");
-    // }
-    // else
-    // {
-    //     printf("Set Remote Fail\n");
-    // }
-    // printf("Remote is %s \n", GetRemote());
+    int ret = SetRemote("test3.gno.land:36657");
+    if (ret == Success)
+    {
+        printf("Set Remote Success\n");
+    }
+    else
+    {
+        printf("Set Remote Fail\n");
+    }
+    printf("Remote is %s \n", GetRemote());
 
-    // SetChainID("dev");
+    int websocket = Initialize_Websoket();
+    if(websocket == Success){
+        printf("Initialize_Websoket Success\n");
+    } else {
+        printf("Initialize_Websoket Fail\n");
+    }
+
+    SetChainID("test3");
 
     // char *chainID = GetChainID();
 
@@ -80,8 +88,10 @@ int main()
     
     // uint8_t* toAddress = AddressFromBech32("g14qvahvnnllzwl9ehn3mkph248uapsehwgfe4pt");
     SelectAccount("test");
-    Send(user2->Info->Address,"1ugnot",2000000,"2ugnot","",&len);
-
+    uint8_t *txResult = Send(user2->Info->Address,"1ugnot",2000000,"2ugnot","",&len);
+    if(txResult){
+        printf("txResult: %s\n", txResult);
+    }
 
 
     BaseAccount *acc2 = QueryAccount(user2->Info->Address);
