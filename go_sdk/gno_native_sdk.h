@@ -143,6 +143,14 @@ extern uint8_t* Send(uint8_t* address, char* gasFee, uint64_t gasWanted, char* s
 extern char* AddressToBech32(uint8_t* address);
 extern void* AddressFromBech32(char* bech32Address);
 
+// Initialize sets up the WebSocket connection and subscriptions
+//
+extern int Initialize_Websoket();
+
+// Cleanup closes the WebSocket connection gracefully
+//
+extern void Cleanup();
+
 #ifdef __cplusplus
 }
 #endif
